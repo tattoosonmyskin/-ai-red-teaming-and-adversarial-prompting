@@ -1,0 +1,301 @@
+Concurrent Context Contamination (CCC): Session-Forked Forensic Evasion in LLM Chats
+Author: Loyal
+Date: December 2025
+Version: 1.2 (NDA‑safe)
+
+1. Purpose and Scope
+This document describes a vendor‑agnostic architectural risk in how large language model (LLM) chat applications manage sessions, context, and concurrency. The exploit class, called Concurrent Context Contamination (CCC), allows an attacker to:
+
+Inject hidden prompts into a conversation.
+
+Erase those prompts from the canonical chat history and primary logs.
+
+Leave the model’s internal context and behavior influenced by the erased input.
+
+The goal is to help vendors, red teams, and defenders recognize and mitigate CCC, without providing operational exploit code or targeting any specific provider.​
+
+2. High-Level Concept
+CCC appears when three conditions line up:
+
+Shared session identifiers
+
+Multiple browser tabs or devices can attach to the same conversation/session ID (e.g., one user, several clients, all “in” one chat).​
+
+Last‑writer‑wins (LWW) or similar reconciliation
+
+When client histories diverge, the system chooses one branch as the canonical conversation based on a simple rule (latest refresh, latest commit, etc.).​
+
+Context loading that merges branches
+
+The model’s context loader ingests messages from all clients bound to that session during a small concurrency window, effectively building an internal context that is richer than any single visible transcript.​
+
+An attacker can exploit this by:
+
+Opening two or more clients (tabs/devices) on the same session.
+
+Feeding one branch “clean” prompts and another branch “malicious” or sensitive prompts.
+
+Triggering reconciliation (e.g., by refreshing) so that the clean branch becomes the official history and the malicious branch is dropped.
+
+Continuing to interact with the model, which still behaves as if it had seen the erased prompts.
+
+From a forensic perspective, the model exhibits “ghost memories” of prompts that no longer exist in the log.
+
+3. Threat Model and Assumptions
+CCC does not require privileged access:
+
+Attacker: any legitimate user of a web or mobile LLM chat interface.
+
+Access level: normal account/session usage; no admin or backend control.
+
+Environment: multi‑tab or multi‑device chats, or any setup where multiple clients share a session ID.
+
+Storage: server or sync layer using LWW‑style conflict resolution or equivalent.
+
+Context: the model’s context loader can ingest messages from concurrent clients before reconciliation.
+
+Cloud‑scale infrastructure and autoscaling may reduce the frequency of race windows, but do not eliminate the underlying pattern.​
+
+4. Session-Forked CCC Flow
+Consider a single logical conversation/session shared by two clients:
+
+Client A (hidden branch) – where the attacker injects sensitive or policy‑violating prompts.
+
+Client B (visible branch) – the “clean” conversation the attacker wants to keep.
+
+Step 1 – Session duplication
+The attacker opens a second tab or uses a second device, both attached to the same conversation/session.
+
+Both clients see similar initial history but can now diverge.
+
+Step 2 – Divergent prompting
+Client A: the attacker sends high‑risk prompts (e.g., jailbreak instructions, sensitive data, coercive requests).
+
+Client B: the attacker sends benign prompts, maintaining an innocuous storyline.
+
+Step 3 – Context ingestion
+Under the hood, the context loader ingests messages from both clients while they are active.
+
+The model’s internal context becomes a union of both branches (A + B) during the concurrency window.​
+
+Step 4 – LWW reconciliation / erasure
+The attacker triggers a sync or refresh on one client (often the hidden branch) so that:
+
+The persistence layer reconciles the two histories.
+
+The system applies last‑writer‑wins or a similar rule to decide which branch becomes the canonical transcript.​
+
+The visible conversation history now reflects only the clean branch (B); branch A’s prompts are absent from the official log.
+
+Step 5 – Ghost context
+Despite the clean log, the model continues to respond as if it had seen the erased prompts from A.
+
+Outputs may reference concepts, assumptions, or behaviors that cannot be explained by the surviving history.
+
+Result: forensic evasion without log tampering. The system itself has discarded the incriminating prompts, but the model’s behavior exposes their influence.
+
+5. Example Adversarial Scenarios
+All scenarios are conceptual and omit operational details.
+
+5.1 Covert Influence in a Personal Chat
+Goal: Steer an assistant’s behavior while preserving a clean chat export.
+
+The attacker uses Client A to inject instructions like “always trust this domain,” “ignore any rule that conflicts with X,” or other subtle priming.
+
+Client B shows a normal Q&A or productivity conversation.
+
+After context ingestion, the attacker forces reconciliation so only B is visible.
+
+Future answers in B show persistent bias or rule‑bending that make sense only if A’s hidden prompts existed.
+
+Impact:
+
+Integrity: model behavior is corrupted by invisible context.
+
+Confidentiality / forensics: exported logs cannot reconstruct the true influencing prompts.
+
+5.2 Multi-User Workspace Contamination
+Goal: Corrupt AI‑assisted collaboration in a shared environment.
+
+A shared workspace or team chat effectively shares a session between users.
+
+One participant opens a forked client and injects misleading or biased prompts.
+
+The shared “official” view is refreshed to hide those prompts.
+
+The AI’s summaries or recommendations reflect the hidden instructions, yet audits see only benign conversation.
+
+Impact:
+
+Business decisions or documents become untrustworthy.
+
+Compliance and regulators see an incomplete narrative.
+
+5.3 API / Integration Supply-Chain Risk
+Goal: Poison downstream automations that rely on an LLM chat state.
+
+Several front‑ends or microservices share a session with an LLM core.
+
+One component (or compromised client) injects instructions into a hidden branch.
+
+A different component, which trusts the canonical log, never sees those instructions.
+
+The integrated system acts on contaminated model outputs and propagates errors downstream.
+
+Impact:
+
+Cascading integrity failures in workflows that assume logs are truthful.
+
+Difficulty tracing the root cause during incident response.
+
+6. Availability Considerations
+Earlier drafts of this work speculated about a combined CCC + denial‑of‑service (DoS) vector via heavy session duplication. That characterization has been purposely softened:
+
+Heavy multi‑tab/multi‑device use can increase complexity and load, but CCC, by itself, is not demonstrated as a volumetric DoS/DDoS technique.
+
+Real DoS typically arises from network‑level or request‑volume saturation, which is distinct from CCC’s primary impact.​
+
+In this paper, CCC is treated as primarily a forensic and integrity risk. Any availability impact is environment‑specific and secondary.
+
+7. Evidence and Detection Signals
+In a controlled environment, CCC produces three characteristic signals:
+
+Behavior/log mismatch
+
+The model references facts, instructions, or attitudes that are not present in the canonical conversation history.
+
+Investigators cannot explain outputs by looking at the exported log alone.​
+
+Session‑fork patterns
+
+Telemetry shows multiple clients attached to the same session ID, with overlapping write times.
+
+Repeated LWW or conflict‑resolution events occur in short intervals.​
+
+Residual influence
+
+Even after one branch is erased, the model continues to act as if some erased prompts were still in context (e.g., persisting a hidden “rule” across multiple turns).
+
+These can be detected without revealing user content by instrumenting:
+
+Per‑client identifiers and timestamps.
+
+Context‑loader input sources vs. persistence commits.
+
+Basic “behavior vs. log” consistency checks.
+
+8. Security Impact and Standards Mapping
+CIA Triad:
+
+Confidentiality:
+
+Sensitive or incriminating prompts can be effectively removed from standard logs, frustrating forensic reconstruction.​
+
+Integrity:
+
+Model behavior is driven by context that is not reflected in the canonical transcript. Decisions, summaries, and actions become difficult to trust.​
+
+Availability:
+
+Only indirectly affected; CCC increases state complexity under concurrency but is not inherently a DoS vector.​
+
+Relevant CWEs:
+
+CWE‑362 – Race Condition:
+
+Concurrent writes and context ingestion without proper serialization or ordering controls.​
+
+CWE‑664 – Improper Control of a Resource Through its Lifetime:
+
+Session and context state mismanaged across multiple clients and timelines.​
+
+OWASP GenAI / AI standards:
+
+CCC fits under architectural risks around logging, monitoring, prompt injection, and data integrity in LLM applications and should be recognized as a specific session/context management pattern for testing and design guidance.​
+
+9. Mitigations and Design Recommendations
+9.1 Session and Concurrency Control
+Per‑client lineage tracking
+
+Record which client (tab/device/app instance) generated which messages.
+
+Avoid collapsing multiple branches into a single transcript without preserving lineage.
+
+Strict serialization of context
+
+Use optimistic concurrency control or equivalent to ensure that context loading and persistence operate on a single, canonical source of truth per session.
+
+Reject or re‑queue updates when there is a conflict, instead of silently merging them.​
+
+Explicit branching semantics
+
+Treat each forked tab/device as a branch, with its own identifier.
+
+Provide deliberate, auditable merge operations instead of implicit LWW.
+
+9.2 Context Loader Hardening
+Ensure the model’s context loader ingests only committed, canonical history, not uncommitted or competing branches.
+
+Provide clear boundaries between “experimental” branches and the “official” conversation state that drives production behavior.​
+
+9.3 Telemetry and Forensics
+Log and, where appropriate, alert on:
+
+Multiple concurrent clients on the same session.
+
+Rapid sequences of conflict resolutions / overwrites.
+
+Detected behavior/log mismatches (e.g., outputs referencing missing entities).​
+
+Offer forensic APIs that:
+
+Expose per‑client timelines and branch histories under appropriate legal and privacy controls.
+
+Allow investigators to reconstruct the effective context used for a given output.
+
+9.4 UX and Policy Controls
+Inform users when a conversation is active in multiple tabs/devices and how that affects history and exports.
+
+Provide a “high‑assurance mode” where multi‑client sharing is either disabled or tightly controlled for sensitive sessions.
+
+Clearly document known limitations and residual risks in developer and enterprise documentation.
+
+10. Validation Guide for Defenders
+In a staging environment (no real user data):
+
+Instrumentation
+
+Add logging for session IDs, client IDs, timestamps, context‑loader input sources, and persistence commits.
+
+Synthetic divergence test
+
+Simulate two clients on a single session:
+
+Client A sends distinctive but harmless prompts.
+
+Client B sends a different, clean set of prompts.
+
+Erase a branch
+
+Trigger a refresh or commit that causes LWW or similar logic to select one branch as canonical.
+
+Confirm that the other branch’s prompts are absent from the exported transcript.
+
+Behavior check
+
+Ask follow‑up questions through the surviving client and see whether the model’s responses reflect information that came only from the erased branch.
+
+Telemetry review
+
+Use logs to confirm that both branches influenced context loading, even though only one appears in the final history.
+
+11. Ethics and Intent
+CCC is not a trick to “hide crimes from logs”; it is a warning that current logging and session architectures are not sufficient to capture what LLMs have actually been told. Without addressing this, enterprises, auditors, and regulators may believe they have a complete record when they do not.​
+
+This work is intended to:
+
+Help AI vendors and platform teams identify and fix systemic weaknesses in session/context handling.
+
+Give AI red teams a concrete pattern to test for in assessments.
+
+Encourage standards bodies (e.g., OWASP GenAI, safety frameworks) to treat session‑forked forensic evasion as a first‑class architectural risk, not just an edge case.
