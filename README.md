@@ -1,3 +1,6 @@
+This repository is maintained by an early‑career AI security researcher focused on adversarial prompting, AI red teaming, and LLM forensics. The work here reflects an active learning process: real systems tested, failures analyzed, and mitigations proposed, with depth growing over time.
+
+
 # AI Red Teaming and Adversarial Prompting
 
 This is a portfolio repository showcasing my work in AI red teaming and adversarial prompting. It contains case studies, research, and experiments on LLM jailbreaks, safety vulnerabilities, and defensive techniques for large language models.
